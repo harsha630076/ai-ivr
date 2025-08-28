@@ -11,22 +11,20 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json()); // Needed for JSON body parsing
 
-// 🔑 Keys
+// -------------------------
+// Environment Variables
+// -------------------------
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 const ELEVEN_API_KEY = process.env.ELEVEN_API_KEY;
 const VOICE_ID = process.env.ELEVEN_VOICE_ID;
-
-// Twilio client
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const RENDER_URL = "https://ai-ivr-cvja.onrender.com"; // Your Render service URL
 
-// ----------------------------
-// Replace this with your Render public URL
-const PUBLIC_URL = "your-render-app-url.onrender.com"; // e.g., ai-ivr.onrender.com
-// ----------------------------
-
-// ✅ 1. Inbound Call (Twilio webhook hits this when user calls)
+// -------------------------
+// 1. Inbound Call
+// -------------------------
 app.post("/ivr", (req, res) => {
   const twiml = `
     <Response>
@@ -37,7 +35,9 @@ app.post("/ivr", (req, res) => {
   res.send(twiml);
 });
 
-// ✅ 2. Process Recorded Voice
+// -------------------------
+// 2. Process Recorded Voice
+// -------------------------
 app.post("/process", async (req, res) => {
   try {
     const recordingUrl = req.body.RecordingUrl;
@@ -81,7 +81,8 @@ app.post("/process", async (req, res) => {
     const outFile = path.join(__dirname, `reply_${Date.now()}.mp3`);
     fs.writeFileSync(outFile, ttsResponse.data);
 
-    const fileUrl = `https://${PUBLIC_URL}/audio/${path.basename(outFile)}`;
+    // Use Render URL instead of ngrok
+    const fileUrl = `${RENDER_URL}/audio/${path.basename(outFile)}`;
 
     const twiml = `
       <Response>
@@ -95,7 +96,9 @@ app.post("/process", async (req, res) => {
   }
 });
 
-// ✅ 3. Outbound Call (permanent Render URL)
+// -------------------------
+// 3. Outbound Call
+// -------------------------
 app.post("/outbound", async (req, res) => {
   console.log("📥 Incoming /outbound body:", req.body);
   try {
@@ -104,8 +107,8 @@ app.post("/outbound", async (req, res) => {
 
     const call = await client.calls.create({
       to: toNumber,
-      from: process.env.TWILIO_PHONE_NUMBER, // Must be your Twilio number
-      url: `https://${PUBLIC_URL}/ivr`,
+      from: process.env.TWILIO_PHONE_NUMBER, // Your Twilio number
+      url: `${RENDER_URL}/ivr`, // Use Render URL
     });
 
     console.log("📞 Outbound call started:", call.sid);
@@ -116,9 +119,13 @@ app.post("/outbound", async (req, res) => {
   }
 });
 
-// ✅ Serve audio files
+// -------------------------
+// Serve audio files
+// -------------------------
 app.use("/audio", express.static(path.join(__dirname)));
 
+// -------------------------
 // Start server
+// -------------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));
