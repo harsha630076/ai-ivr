@@ -14,13 +14,27 @@ app.use(bodyParser.json()); // Needed for JSON body parsing
 // -------------------------
 // Environment Variables
 // -------------------------
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+console.log("🔑 Checking environment variables...");
+console.log("TWILIO_ACCOUNT_SID:", process.env.TWILIO_ACCOUNT_SID ? "SET" : "MISSING");
+console.log("TWILIO_AUTH_TOKEN:", process.env.TWILIO_AUTH_TOKEN ? "SET" : "MISSING");
+console.log("TWILIO_PHONE_NUMBER:", process.env.TWILIO_PHONE_NUMBER ? "SET" : "MISSING");
+console.log("OPENAI_API_KEY:", process.env.OPENAI_API_KEY ? "SET" : "MISSING");
+console.log("ELEVEN_API_KEY:", process.env.ELEVEN_API_KEY ? "SET" : "MISSING");
+console.log("ELEVEN_VOICE_ID:", process.env.ELEVEN_VOICE_ID ? "SET" : "MISSING");
+
+if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
+  console.error("❌ Twilio credentials missing! Outbound calls will fail.");
+}
+
+if (!process.env.OPENAI_API_KEY) console.error("❌ OpenAI API key missing!");
+if (!process.env.ELEVEN_API_KEY || !process.env.ELEVEN_VOICE_ID) console.error("❌ ElevenLabs credentials missing!");
+
+// Initialize clients
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const ELEVEN_API_KEY = process.env.ELEVEN_API_KEY;
 const VOICE_ID = process.env.ELEVEN_VOICE_ID;
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const RENDER_URL = "https://ai-ivr-cvja.onrender.com"; // Your Render service URL
+const RENDER_URL = process.env.RENDER_URL || "https://ai-ivr-cvja.onrender.com";
 
 // -------------------------
 // 1. Inbound Call
@@ -41,17 +55,21 @@ app.post("/ivr", (req, res) => {
 app.post("/process", async (req, res) => {
   try {
     const recordingUrl = req.body.RecordingUrl;
+    if (!recordingUrl) {
+      console.error("❌ /process missing RecordingUrl in request");
+      return res.send("<Response><Say>Recording URL missing.</Say></Response>");
+    }
+
     console.log("🎤 User recording:", recordingUrl);
 
     // Download recording from Twilio
-    const audioResponse = await axios.get(`${recordingUrl}.wav`, {
-      responseType: "arraybuffer",
-    });
-    fs.writeFileSync("user.wav", audioResponse.data);
+    const audioResponse = await axios.get(`${recordingUrl}.wav`, { responseType: "arraybuffer" });
+    const audioFile = path.join(__dirname, "user.wav");
+    fs.writeFileSync(audioFile, audioResponse.data);
 
-    // Transcribe with Whisper
+    // Transcribe with OpenAI Whisper
     const stt = await openai.audio.transcriptions.create({
-      file: fs.createReadStream("user.wav"),
+      file: fs.createReadStream(audioFile),
       model: "whisper-1",
     });
     const userText = stt.text;
@@ -80,8 +98,6 @@ app.post("/process", async (req, res) => {
 
     const outFile = path.join(__dirname, `reply_${Date.now()}.mp3`);
     fs.writeFileSync(outFile, ttsResponse.data);
-
-    // Use Render URL instead of ngrok
     const fileUrl = `${RENDER_URL}/audio/${path.basename(outFile)}`;
 
     const twiml = `
@@ -105,10 +121,14 @@ app.post("/outbound", async (req, res) => {
     const toNumber = req.body.to;
     if (!toNumber) return res.status(400).json({ error: "Missing 'to' number" });
 
+    if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
+      return res.status(500).json({ error: "Twilio credentials missing" });
+    }
+
     const call = await client.calls.create({
       to: toNumber,
-      from: process.env.TWILIO_PHONE_NUMBER, // Your Twilio number
-      url: `${RENDER_URL}/ivr`, // Use Render URL
+      from: process.env.TWILIO_PHONE_NUMBER,
+      url: `${RENDER_URL}/ivr`,
     });
 
     console.log("📞 Outbound call started:", call.sid);
